@@ -5,6 +5,7 @@ Asynchronous tasks for bank synchronization and processing
 import logging
 from datetime import timedelta
 
+from apps.companies.models import Company
 from celery import shared_task
 from django.utils import timezone
 

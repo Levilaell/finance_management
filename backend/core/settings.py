@@ -20,6 +20,9 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
 
+# Custom User Model - MUST BE DEFINED BEFORE APPS
+AUTH_USER_MODEL = 'authentication.User'
+
 # Application definition
 DJANGO_APPS = [
     'django.contrib.admin',
@@ -197,6 +200,10 @@ CORS_ALLOW_CREDENTIALS = True
 
 # OpenAI API
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
+
+# Open Banking API (Mock)
+OPEN_BANKING_CLIENT_ID = config('OPEN_BANKING_CLIENT_ID', default='mock-client-id')
+OPEN_BANKING_CLIENT_SECRET = config('OPEN_BANKING_CLIENT_SECRET', default='mock-client-secret')
 
 # AWS Settings (for production)
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
