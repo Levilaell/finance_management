@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 
 import requests
 from django.conf import settings
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 
 from .models import (BankAccount, BankProvider, BankSync, RecurringTransaction,

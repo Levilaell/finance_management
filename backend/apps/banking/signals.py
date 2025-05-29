@@ -1,6 +1,10 @@
 """
 Banking app signals for automatic processing
 """
+import json
+from decimal import Decimal
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 from apps.categories.services import AICategorizationService
 from django.db.models import F
 from django.db.models.signals import post_save, pre_save
@@ -27,6 +31,12 @@ def process_new_transaction(sender, instance, created, **kwargs):
         if instance.balance_after is None:
             # This would typically be handled by the banking sync
             pass
+        
+        # Send real-time notification to user
+        send_transaction_notification(instance, 'created')
+    else:
+        # Transaction updated
+        send_transaction_notification(instance, 'updated')
 
 
 @receiver(pre_save, sender=BankAccount)
@@ -40,3 +50,89 @@ def update_primary_account(sender, instance, **kwargs):
             company=instance.company,
             is_primary=True
         ).exclude(pk=instance.pk).update(is_primary=False)
+
+
+@receiver(post_save, sender=BankAccount)
+def send_balance_update(sender, instance, created, **kwargs):
+    """
+    Send real-time balance updates
+    """
+    if not created:  # Only for updates, not new accounts
+        send_balance_notification(instance)
+
+
+def send_transaction_notification(transaction, action):
+    """
+    Send real-time transaction notification via WebSocket
+    """
+    channel_layer = get_channel_layer()
+    if not channel_layer:
+        return
+    
+    # Get all users from the company
+    users = transaction.bank_account.company.users.all()
+    
+    # Prepare transaction data
+    transaction_data = {
+        'type': 'transaction_update',
+        'message': {
+            'action': action,
+            'transaction': {
+                'id': str(transaction.id),
+                'external_id': transaction.external_id,
+                'description': transaction.description,
+                'amount': float(transaction.amount),
+                'transaction_date': transaction.transaction_date.isoformat() if transaction.transaction_date else None,
+                'balance_after': float(transaction.balance_after) if transaction.balance_after else None,
+                'transaction_type': transaction.transaction_type,
+                'category': transaction.category.name if transaction.category else None,
+                'bank_account': {
+                    'id': str(transaction.bank_account.id),
+                    'account_name': transaction.bank_account.account_name,
+                    'account_number': transaction.bank_account.account_number[-4:],  # Last 4 digits only
+                }
+            }
+        }
+    }
+    
+    # Send to all company users
+    for user in users:
+        group_name = f"transactions_{user.id}"
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            transaction_data
+        )
+
+
+def send_balance_notification(bank_account):
+    """
+    Send real-time balance update via WebSocket
+    """
+    channel_layer = get_channel_layer()
+    if not channel_layer:
+        return
+    
+    # Get all users from the company
+    users = bank_account.company.users.all()
+    
+    # Prepare balance data
+    balance_data = {
+        'type': 'balance_update',
+        'message': {
+            'bank_account': {
+                'id': str(bank_account.id),
+                'account_name': bank_account.account_name,
+                'account_number': bank_account.account_number[-4:],  # Last 4 digits only
+                'balance': float(bank_account.balance),
+                'is_primary': bank_account.is_primary,
+            }
+        }
+    }
+    
+    # Send to all company users
+    for user in users:
+        group_name = f"transactions_{user.id}"
+        async_to_sync(channel_layer.group_send)(
+            group_name,
+            balance_data
+        )

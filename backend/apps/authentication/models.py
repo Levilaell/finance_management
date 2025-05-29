@@ -34,6 +34,11 @@ class User(AbstractUser):
         default='America/Sao_Paulo'
     )
     
+    # 2FA settings
+    is_two_factor_enabled = models.BooleanField(_('2FA enabled'), default=False)
+    two_factor_secret = models.CharField(_('2FA secret'), max_length=32, blank=True)
+    backup_codes = models.JSONField(_('backup codes'), default=list, blank=True)
+    
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username', 'first_name', 'last_name']
     

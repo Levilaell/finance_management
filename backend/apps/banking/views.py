@@ -11,8 +11,11 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
 
 from .models import BankAccount, BankProvider, Transaction, TransactionCategory
+from core.cache import cache_for_user
 from .serializers import (BankAccountSerializer, BankProviderSerializer,
                           DashboardSerializer, TransactionCategorySerializer,
                           TransactionSerializer)
@@ -130,6 +133,7 @@ class DashboardView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
     
+    @method_decorator(cache_page(60 * 5))  # Cache for 5 minutes
     def get(self, request):
         company = request.user.company
         
