@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     gettext \
     curl \
+    netcat-openbsd \
+    wait-for-it \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -29,23 +31,21 @@ COPY . /app/
 # Create necessary directories
 RUN mkdir -p /app/staticfiles /app/media /app/logs
 
-# Collect static files
-RUN python manage.py collectstatic --noinput || true
-
 # Create non-root user
 RUN groupadd -r appuser && \
     useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
     chown -R appuser:appuser /app
 
+# Make entrypoint script executable
+COPY docker-entrypoint.sh /app/
+RUN chmod +x /app/docker-entrypoint.sh && \
+    chown appuser:appuser /app/docker-entrypoint.sh
+
 # Switch to non-root user
 USER appuser
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/auth/health/')" || exit 1
 
 # Expose port
 EXPOSE 8000
 
 # Default command
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "2", "--worker-class", "gthread", "--timeout", "60", "--access-logfile", "-", "--error-logfile", "-", "core.wsgi:application"]
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

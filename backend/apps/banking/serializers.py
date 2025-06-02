@@ -7,8 +7,8 @@ from decimal import Decimal
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import (BankAccount, BankProvider, BankSync, RecurringTransaction,
-                     Transaction, TransactionCategory)
+from .models import (BankAccount, BankProvider, BankSync, Budget, 
+                     FinancialGoal, RecurringTransaction, Transaction, TransactionCategory)
 
 
 class BankProviderSerializer(serializers.ModelSerializer):
@@ -28,6 +28,7 @@ class BankAccountSerializer(serializers.ModelSerializer):
     Bank account serializer with balance and status info
     """
     bank_provider = BankProviderSerializer(read_only=True)
+    bank_provider_id = serializers.IntegerField(write_only=True)
     masked_account = serializers.ReadOnlyField()
     display_name = serializers.ReadOnlyField()
     last_sync_status = serializers.SerializerMethodField()
@@ -36,15 +37,15 @@ class BankAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = BankAccount
         fields = [
-            'id', 'bank_provider', 'account_type', 'agency', 
-            'account_number', 'masked_account', 'display_name',
+            'id', 'bank_provider', 'bank_provider_id', 'account_type', 'agency', 
+            'account_number', 'account_digit', 'masked_account', 'display_name',
             'current_balance', 'available_balance', 'nickname',
             'is_primary', 'is_active', 'status', 'last_sync_at',
-            'last_sync_status', 'transaction_count', 'created_at'
+            'last_sync_status', 'transaction_count', 'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'current_balance', 'available_balance', 'last_sync_at',
-            'status', 'masked_account', 'display_name'
+            'id', 'current_balance', 'available_balance', 'last_sync_at',
+            'status', 'masked_account', 'display_name', 'created_at', 'updated_at'
         ]
     
     def get_last_sync_status(self, obj):
@@ -222,3 +223,192 @@ class CategoryAnalysisSerializer(serializers.Serializer):
     change_percentage = serializers.FloatField()
     transaction_count = serializers.IntegerField()
     average_amount = serializers.DecimalField(max_digits=15, decimal_places=2)
+
+
+class BudgetSerializer(serializers.ModelSerializer):
+    """
+    Budget serializer for expense tracking
+    """
+    remaining_amount = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    spent_percentage = serializers.FloatField(read_only=True)
+    is_exceeded = serializers.BooleanField(read_only=True)
+    is_alert_threshold_reached = serializers.BooleanField(read_only=True)
+    categories = TransactionCategorySerializer(many=True, read_only=True)
+    category_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False
+    )
+    
+    class Meta:
+        model = Budget
+        fields = [
+            'id', 'name', 'description', 'budget_type', 'amount', 'spent_amount',
+            'remaining_amount', 'spent_percentage', 'start_date', 'end_date',
+            'alert_threshold', 'is_alert_enabled', 'status', 'is_rollover',
+            'categories', 'category_ids', 'is_exceeded', 'is_alert_threshold_reached',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'spent_amount', 'created_at', 'updated_at']
+    
+    def create(self, validated_data):
+        category_ids = validated_data.pop('category_ids', [])
+        validated_data['company'] = self.context['request'].user.company
+        validated_data['created_by'] = self.context['request'].user
+        
+        budget = Budget.objects.create(**validated_data)
+        
+        if category_ids:
+            budget.categories.set(category_ids)
+        
+        return budget
+    
+    def update(self, instance, validated_data):
+        category_ids = validated_data.pop('category_ids', None)
+        
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        if category_ids is not None:
+            instance.categories.set(category_ids)
+        
+        return instance
+
+
+class FinancialGoalSerializer(serializers.ModelSerializer):
+    """
+    Financial goal serializer for goal tracking
+    """
+    progress_percentage = serializers.FloatField(read_only=True)
+    remaining_amount = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    days_remaining = serializers.IntegerField(read_only=True)
+    required_monthly_amount = serializers.DecimalField(max_digits=15, decimal_places=2, read_only=True)
+    categories = TransactionCategorySerializer(many=True, read_only=True)
+    bank_accounts = BankAccountSerializer(many=True, read_only=True)
+    category_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False
+    )
+    account_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False
+    )
+    
+    class Meta:
+        model = FinancialGoal
+        fields = [
+            'id', 'name', 'description', 'goal_type', 'target_amount', 'current_amount',
+            'target_date', 'monthly_target', 'progress_percentage', 'remaining_amount',
+            'days_remaining', 'required_monthly_amount', 'status', 'is_automatic_tracking',
+            'send_reminders', 'reminder_frequency', 'categories', 'bank_accounts',
+            'category_ids', 'account_ids', 'created_at', 'updated_at', 'completed_at'
+        ]
+        read_only_fields = ['id', 'current_amount', 'created_at', 'updated_at', 'completed_at']
+    
+    def create(self, validated_data):
+        category_ids = validated_data.pop('category_ids', [])
+        account_ids = validated_data.pop('account_ids', [])
+        validated_data['company'] = self.context['request'].user.company
+        validated_data['created_by'] = self.context['request'].user
+        
+        goal = FinancialGoal.objects.create(**validated_data)
+        
+        if category_ids:
+            goal.categories.set(category_ids)
+        if account_ids:
+            goal.bank_accounts.set(account_ids)
+        
+        return goal
+    
+    def update(self, instance, validated_data):
+        category_ids = validated_data.pop('category_ids', None)
+        account_ids = validated_data.pop('account_ids', None)
+        
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        if category_ids is not None:
+            instance.categories.set(category_ids)
+        if account_ids is not None:
+            instance.bank_accounts.set(account_ids)
+        
+        return instance
+
+
+class TimeSeriesDataSerializer(serializers.Serializer):
+    """
+    Time series data for charts and analytics
+    """
+    date = serializers.DateField()
+    income = serializers.DecimalField(max_digits=15, decimal_places=2)
+    expenses = serializers.DecimalField(max_digits=15, decimal_places=2)
+    balance = serializers.DecimalField(max_digits=15, decimal_places=2)
+    net_flow = serializers.DecimalField(max_digits=15, decimal_places=2)
+
+
+class ExpenseTrendSerializer(serializers.Serializer):
+    """
+    Expense trend analysis data
+    """
+    period = serializers.CharField()
+    category = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2)
+    transaction_count = serializers.IntegerField()
+    change_from_previous = serializers.DecimalField(max_digits=15, decimal_places=2)
+    change_percentage = serializers.FloatField()
+
+
+class ComparativeAnalysisSerializer(serializers.Serializer):
+    """
+    Comparative analysis data for dashboard
+    """
+    current_period = serializers.DecimalField(max_digits=15, decimal_places=2)
+    previous_period = serializers.DecimalField(max_digits=15, decimal_places=2)
+    variance = serializers.DecimalField(max_digits=15, decimal_places=2)
+    variance_percentage = serializers.FloatField()
+    trend = serializers.CharField()  # 'up', 'down', 'stable'
+    
+    
+class EnhancedDashboardSerializer(serializers.Serializer):
+    """
+    Enhanced dashboard data with all features
+    """
+    # Basic financial data
+    current_balance = serializers.DecimalField(max_digits=15, decimal_places=2)
+    monthly_income = serializers.DecimalField(max_digits=15, decimal_places=2)
+    monthly_expenses = serializers.DecimalField(max_digits=15, decimal_places=2)
+    monthly_net = serializers.DecimalField(max_digits=15, decimal_places=2)
+    
+    # Transactions
+    recent_transactions = TransactionSerializer(many=True)
+    transactions_count = serializers.IntegerField()
+    
+    # Categories
+    top_categories = serializers.ListField()
+    
+    # Accounts
+    accounts_count = serializers.IntegerField()
+    
+    # Budget data
+    active_budgets = BudgetSerializer(many=True)
+    budgets_summary = serializers.DictField()
+    
+    # Goals data
+    active_goals = FinancialGoalSerializer(many=True)
+    goals_summary = serializers.DictField()
+    
+    # Trend data
+    monthly_trends = TimeSeriesDataSerializer(many=True)
+    expense_trends = ExpenseTrendSerializer(many=True)
+    
+    # Comparative analysis
+    income_comparison = ComparativeAnalysisSerializer()
+    expense_comparison = ComparativeAnalysisSerializer()
+    
+    # Insights
+    financial_insights = serializers.ListField()
+    alerts = serializers.ListField()

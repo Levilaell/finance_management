@@ -4,10 +4,30 @@ Caixa Digital URL Configuration
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
+from django.http import JsonResponse
 from django.urls import include, path, re_path
 from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
 from rest_framework import permissions
+
+
+def api_root(request):
+    """API root endpoint"""
+    return JsonResponse({
+        'message': 'Caixa Digital API',
+        'version': '1.0',
+        'status': 'running',
+        'endpoints': {
+            'auth': '/api/auth/',
+            'companies': '/api/companies/',
+            'banking': '/api/banking/',
+            'categories': '/api/categories/',
+            'reports': '/api/reports/',
+            'notifications': '/api/notifications/',
+            'documentation': '/swagger/',
+            'admin': '/admin/'
+        }
+    })
 
 # API Documentation
 schema_view = get_schema_view(
@@ -34,9 +54,11 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
+    path('', api_root, name='api-root'),
     path('admin/', admin.site.urls),
     
     # API endpoints
+    path('api/', api_root, name='api-root-detail'),
     path('api/auth/', include('apps.authentication.urls')),
     path('api/companies/', include('apps.companies.urls')),
     path('api/banking/', include('apps.banking.urls')),

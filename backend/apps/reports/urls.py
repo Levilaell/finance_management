@@ -1,35 +1,41 @@
 """
 Reports app URLs
 """
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 
 from .views import (
-    GenerateReportView,
-    ReportListView,
-    ReportDetailView,
-    DownloadReportView,
-    ReportSchedulesView,
-    CreateScheduleView,
-    UpdateScheduleView,
-    DeleteScheduleView,
-    ReportTemplatesView,
+    ReportViewSet,
+    ReportScheduleViewSet,
+    ReportTemplateViewSet,
+    QuickReportsView,
+    AnalyticsView,
+    DashboardStatsView,
+    CashFlowDataView,
+    CategorySpendingView,
+    IncomeVsExpensesView,
 )
 
 app_name = 'reports'
 
+router = DefaultRouter()
+router.register(r'reports', ReportViewSet, basename='report')
+router.register(r'schedules', ReportScheduleViewSet, basename='report-schedule')
+router.register(r'templates', ReportTemplateViewSet, basename='report-template')
+
 urlpatterns = [
-    # Report generation and management
-    path('generate/', GenerateReportView.as_view(), name='generate-report'),
-    path('list/', ReportListView.as_view(), name='report-list'),
-    path('<int:report_id>/', ReportDetailView.as_view(), name='report-detail'),
-    path('<int:report_id>/download/', DownloadReportView.as_view(), name='download-report'),
+    # ViewSet routes
+    path('', include(router.urls)),
     
-    # Scheduled reports
-    path('schedules/', ReportSchedulesView.as_view(), name='report-schedules'),
-    path('schedules/create/', CreateScheduleView.as_view(), name='create-schedule'),
-    path('schedules/<int:schedule_id>/update/', UpdateScheduleView.as_view(), name='update-schedule'),
-    path('schedules/<int:schedule_id>/delete/', DeleteScheduleView.as_view(), name='delete-schedule'),
+    # Quick reports
+    path('quick/', QuickReportsView.as_view(), name='quick-reports'),
     
-    # Report templates
-    path('templates/', ReportTemplatesView.as_view(), name='report-templates'),
+    # Analytics
+    path('analytics/', AnalyticsView.as_view(), name='analytics'),
+    
+    # Dashboard endpoints
+    path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
+    path('dashboard/cash-flow/', CashFlowDataView.as_view(), name='cash-flow-data'),
+    path('dashboard/category-spending/', CategorySpendingView.as_view(), name='category-spending'),
+    path('dashboard/income-vs-expenses/', IncomeVsExpensesView.as_view(), name='income-vs-expenses'),
 ]

@@ -13,10 +13,10 @@ from decouple import config
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config('SECRET_KEY', default='your-secret-key-here')
+SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
 
@@ -37,6 +37,10 @@ THIRD_PARTY_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+    'channels',
+    'django_celery_beat',
+    'django_celery_results',
+    'drf_yasg',
 ]
 
 LOCAL_APPS = [
@@ -52,6 +56,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'django_ratelimit.middleware.RatelimitMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -81,6 +86,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'core.wsgi.application'
 
+# Channels
+ASGI_APPLICATION = 'core.asgi.application'
+
 # Database
 DATABASES = {
     'default': {
@@ -104,6 +112,16 @@ CACHES = {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         }
     }
+}
+
+# Channels Redis
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [REDIS_URL],
+        },
+    },
 }
 
 # Celery
@@ -161,17 +179,35 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
     'DATETIME_FORMAT': '%d/%m/%Y %H:%M:%S',
     'DATE_FORMAT': '%d/%m/%Y',
+    'DEFAULT_METADATA_CLASS': 'rest_framework.metadata.SimpleMetadata',
+    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.AutoSchema',
 }
+
+# Separate JWT signing key for enhanced security
+JWT_SIGNING_KEY = config('JWT_SIGNING_KEY', default=SECRET_KEY)
+
+# Field-level encryption key for sensitive data
+FIELD_ENCRYPTION_KEY = config('FIELD_ENCRYPTION_KEY')
+
+# Rate limiting configuration
+RATELIMIT_USE_CACHE = 'default'
+RATELIMIT_ENABLE = True
+
+# Security headers
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 # JWT Settings
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
     'ALGORITHM': 'HS256',
-    'SIGNING_KEY': SECRET_KEY,
+    'SIGNING_KEY': JWT_SIGNING_KEY,
     'VERIFYING_KEY': None,
     'AUDIENCE': None,
     'ISSUER': None,
@@ -196,12 +232,51 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
+# Secure CORS configuration
+CORS_ALLOW_ALL_ORIGINS = False
+
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# Disable CSRF for API endpoints
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 # OpenAI API
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
 
-# Open Banking API (Mock)
+# Open Finance Brasil Configuration
+# These should be configured for production with real certificates and credentials
+OPEN_FINANCE_CLIENT_ID = config('OPEN_FINANCE_CLIENT_ID', default='')
+OPEN_FINANCE_SOFTWARE_STATEMENT = config('OPEN_FINANCE_SOFTWARE_STATEMENT', default='')
+OPEN_FINANCE_DIRECTORY_URL = config(
+    'OPEN_FINANCE_DIRECTORY_URL', 
+    default='https://data.directory.openbankingbrasil.org.br'
+)
+OPEN_FINANCE_REDIRECT_URI = config(
+    'OPEN_FINANCE_REDIRECT_URI', 
+    default='http://localhost:3000/banking/callback'
+)
+
+# Certificate paths for mTLS authentication
+OPEN_FINANCE_CLIENT_CERT_PATH = config('OPEN_FINANCE_CLIENT_CERT_PATH', default='')
+OPEN_FINANCE_CLIENT_KEY_PATH = config('OPEN_FINANCE_CLIENT_KEY_PATH', default='')
+OPEN_FINANCE_CA_CERT_PATH = config('OPEN_FINANCE_CA_CERT_PATH', default='')
+OPEN_FINANCE_SIGNING_KEY_PATH = config('OPEN_FINANCE_SIGNING_KEY_PATH', default='')
+
+# Legacy Open Banking settings (for backwards compatibility)
 OPEN_BANKING_CLIENT_ID = config('OPEN_BANKING_CLIENT_ID', default='mock-client-id')
 OPEN_BANKING_CLIENT_SECRET = config('OPEN_BANKING_CLIENT_SECRET', default='mock-client-secret')
 

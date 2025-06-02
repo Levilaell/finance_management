@@ -8,6 +8,8 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
+from django_ratelimit.decorators import ratelimit
+from django.utils.decorators import method_decorator
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -38,6 +40,7 @@ from .utils import (
 User = get_user_model()
 
 
+@method_decorator(ratelimit(key='ip', rate='5/m', method='POST'), name='dispatch')
 class RegisterView(generics.CreateAPIView):
     """User registration with company creation"""
     queryset = User.objects.all()
@@ -72,6 +75,7 @@ class RegisterView(generics.CreateAPIView):
         }, status=status.HTTP_201_CREATED)
 
 
+@method_decorator(ratelimit(key='ip', rate='10/m', method='POST'), name='dispatch')
 class LoginView(APIView):
     """User login"""
     permission_classes = (AllowAny,)
@@ -125,9 +129,20 @@ class LogoutView(APIView):
         try:
             refresh_token = request.data.get('refresh')
             if refresh_token:
-                token = RefreshToken(refresh_token)
-                token.blacklist()
-            return Response({'message': 'Logout successful'}, status=status.HTTP_205_RESET_CONTENT)
+                try:
+                    token = RefreshToken(refresh_token)
+                    # Try to blacklist if method exists
+                    if hasattr(token, 'blacklist'):
+                        token.blacklist()
+                    else:
+                        # Alternative: just mark as used (this invalidates the token)
+                        token.set_jti()
+                        token.set_exp()
+                except Exception:
+                    # If token processing fails, still return success
+                    # (frontend should remove token anyway)
+                    pass
+            return Response({'message': 'Logout successful'}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 

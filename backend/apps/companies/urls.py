@@ -17,6 +17,9 @@ from .views import (
 app_name = 'companies'
 
 urlpatterns = [
+    # Default company profile (same as profile/)
+    path('', CompanyDetailView.as_view(), name='company-index'),
+    
     # Company management
     path('profile/', CompanyDetailView.as_view(), name='company-detail'),
     path('update/', CompanyUpdateView.as_view(), name='company-update'),

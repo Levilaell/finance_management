@@ -4,6 +4,7 @@ AI-powered categorization and rule-based matching
 """
 import json
 import logging
+import math
 import re
 from decimal import Decimal
 from typing import Dict, List, Optional, Tuple
@@ -11,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import openai
 from apps.banking.models import Transaction, TransactionCategory
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Q, Count
 from django.utils import timezone
 
 from .models import (AITrainingData, CategorizationLog, CategoryRule,
@@ -27,7 +28,9 @@ class AICategorizationService:
     """
     
     def __init__(self):
-        openai.api_key = settings.OPENAI_API_KEY
+        if not settings.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY must be configured")
+        self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self.model_version = "gpt-3.5-turbo"
         self.confidence_threshold = 0.7
     
@@ -156,7 +159,7 @@ class AICategorizationService:
             prompt = self._build_ai_prompt(transaction, category_list)
             
             # Call OpenAI API
-            response = openai.ChatCompletion.create(
+            response = self.client.chat.completions.create(
                 model=self.model_version,
                 messages=[
                     {
@@ -323,7 +326,7 @@ class AICategorizationService:
             'transaction_weekday': transaction.transaction_date.weekday(),
             'has_counterpart': bool(transaction.counterpart_name),
             'description_words': len(transaction.description.split()),
-            'amount_log': float(abs(transaction.amount).ln()) if transaction.amount > 0 else 0
+            'amount_log': math.log(float(abs(transaction.amount))) if transaction.amount > 0 else 0
         }
     
     def _get_amount_range(self, amount: Decimal) -> str:

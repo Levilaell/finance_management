@@ -3,12 +3,15 @@ Banking and financial transaction models
 Core financial data handling with AI categorization support
 """
 import uuid
+import re
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+from core.encryption import EncryptedTextField
 
 User = get_user_model()
 
@@ -77,9 +80,15 @@ class BankAccount(models.Model):
     
     # Open Banking integration
     external_account_id = models.CharField(_('external account ID'), max_length=100, blank=True)
-    access_token = models.TextField(_('access token'), blank=True)
-    refresh_token = models.TextField(_('refresh token'), blank=True)
+    
+    # Encrypted token storage
+    _access_token_encrypted = models.TextField(_('encrypted access token'), blank=True)
+    _refresh_token_encrypted = models.TextField(_('encrypted refresh token'), blank=True)
     token_expires_at = models.DateTimeField(_('token expires at'), blank=True, null=True)
+    
+    # Encrypted token descriptors
+    access_token = EncryptedTextField('access_token')
+    refresh_token = EncryptedTextField('refresh_token')
     
     # Account status and balance
     status = models.CharField(_('status'), max_length=20, choices=STATUS_CHOICES, default='pending')
@@ -111,7 +120,12 @@ class BankAccount(models.Model):
         db_table = 'bank_accounts'
         verbose_name = _('Bank Account')
         verbose_name_plural = _('Bank Accounts')
-        unique_together = ('company', 'bank_provider', 'agency', 'account_number')
+        unique_together = ('company', 'bank_provider', 'agency', 'account_number', 'account_type')
+        indexes = [
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['bank_provider', 'external_account_id']),
+            models.Index(fields=['last_sync_at']),
+        ]
     
     def __str__(self):
         return f"{self.bank_provider.name} - {self.agency}/{self.account_number}"
@@ -122,6 +136,48 @@ class BankAccount(models.Model):
         if len(self.account_number) > 4:
             return f"****{self.account_number[-4:]}"
         return self.account_number
+    
+    def save(self, *args, **kwargs):
+        """Custom save method for validation"""
+        self.full_clean()
+        super().save(*args, **kwargs)
+    
+    def clean(self):
+        """Custom validation for Brazilian bank accounts"""
+        super().clean()
+        
+        # Validate agency format (Brazilian format: 0000-0 or 0000)
+        if self.agency:
+            if not self._validate_brazilian_agency(self.agency):
+                raise ValidationError({
+                    'agency': 'Agência deve estar no formato brasileiro (ex: 0001, 1234-5)'
+                })
+        
+        # Validate account number format (Brazilian format: numbers + optional letter)
+        if self.account_number:
+            if not self._validate_brazilian_account(self.account_number):
+                raise ValidationError({
+                    'account_number': 'Número da conta deve estar no formato brasileiro (ex: 12345-6, 123456-X)'
+                })
+    
+    def _validate_brazilian_agency(self, agency: str) -> bool:
+        """Validate Brazilian agency format"""
+        # Remove common separators
+        clean_agency = agency.replace('-', '').replace('.', '').strip()
+        
+        # Brazilian agencies: 3-5 digits, sometimes with check digit
+        pattern = r'^\d{3,5}$'
+        return bool(re.match(pattern, clean_agency)) and len(clean_agency) <= 5
+    
+    def _validate_brazilian_account(self, account: str) -> bool:
+        """Validate Brazilian account number format"""
+        # Remove common separators
+        clean_account = account.replace('-', '').replace('.', '').strip()
+        
+        # Brazilian accounts: digits + optional check digit (letter or number)
+        # Examples: 123456, 1234567, 123456X, 123456-7
+        pattern = r'^\d{4,12}[A-Z0-9]?$'
+        return bool(re.match(pattern, clean_account.upper()))
     
     @property
     def display_name(self):
@@ -379,6 +435,276 @@ class RecurringTransaction(models.Model):
     
     def __str__(self):
         return f"{self.name} - {self.frequency}"
+
+
+class Budget(models.Model):
+    """
+    Budget management for expense tracking and control
+    """
+    BUDGET_TYPES = [
+        ('monthly', 'Mensal'),
+        ('weekly', 'Semanal'),
+        ('yearly', 'Anual'),
+        ('custom', 'Personalizado'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('active', 'Ativo'),
+        ('inactive', 'Inativo'),
+        ('exceeded', 'Excedido'),
+        ('paused', 'Pausado'),
+    ]
+    
+    # Basic information
+    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='budgets')
+    name = models.CharField(_('budget name'), max_length=200)
+    description = models.TextField(_('description'), blank=True)
+    
+    # Budget settings
+    budget_type = models.CharField(_('budget type'), max_length=20, choices=BUDGET_TYPES, default='monthly')
+    amount = models.DecimalField(_('budget amount'), max_digits=15, decimal_places=2)
+    spent_amount = models.DecimalField(_('spent amount'), max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    
+    # Categories
+    categories = models.ManyToManyField(
+        TransactionCategory,
+        related_name='budgets',
+        blank=True,
+        help_text="Categories included in this budget"
+    )
+    
+    # Time period
+    start_date = models.DateField(_('start date'))
+    end_date = models.DateField(_('end date'))
+    
+    # Alert settings
+    alert_threshold = models.IntegerField(
+        _('alert threshold (%)'),
+        default=80,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+        help_text="Send alert when this percentage of budget is reached"
+    )
+    is_alert_enabled = models.BooleanField(_('enable alerts'), default=True)
+    last_alert_sent = models.DateTimeField(_('last alert sent'), blank=True, null=True)
+    
+    # Status
+    status = models.CharField(_('status'), max_length=20, choices=STATUS_CHOICES, default='active')
+    is_rollover = models.BooleanField(_('rollover unused budget'), default=False)
+    
+    # Metadata
+    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_budgets')
+    
+    class Meta:
+        db_table = 'budgets'
+        verbose_name = _('Budget')
+        verbose_name_plural = _('Budgets')
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.name} - R$ {self.amount}"
+    
+    @property
+    def remaining_amount(self):
+        """Calculate remaining budget amount"""
+        return self.amount - self.spent_amount
+    
+    @property
+    def spent_percentage(self):
+        """Calculate percentage of budget spent"""
+        if self.amount == 0:
+            return 0
+        return (self.spent_amount / self.amount) * 100
+    
+    @property
+    def is_exceeded(self):
+        """Check if budget is exceeded"""
+        return self.spent_amount > self.amount
+    
+    @property
+    def is_alert_threshold_reached(self):
+        """Check if alert threshold is reached"""
+        return self.spent_percentage >= self.alert_threshold
+    
+    def update_spent_amount(self):
+        """Update spent amount based on transactions"""
+        from django.db.models import Sum
+        from django.utils import timezone
+        
+        # Get transactions in budget period
+        transactions = Transaction.objects.filter(
+            bank_account__company=self.company,
+            transaction_date__gte=self.start_date,
+            transaction_date__lte=self.end_date,
+            transaction_type__in=['debit', 'transfer_out', 'pix_out', 'fee']
+        )
+        
+        # Filter by categories if specified
+        if self.categories.exists():
+            transactions = transactions.filter(category__in=self.categories.all())
+        
+        # Calculate total spent
+        total_spent = transactions.aggregate(
+            total=Sum('amount')
+        )['total'] or Decimal('0.00')
+        
+        self.spent_amount = abs(total_spent)
+        self.save(update_fields=['spent_amount', 'updated_at'])
+        
+        # Update status based on spending
+        if self.is_exceeded and self.status != 'exceeded':
+            self.status = 'exceeded'
+            self.save(update_fields=['status'])
+
+
+class FinancialGoal(models.Model):
+    """
+    Financial goals tracking and management
+    """
+    GOAL_TYPES = [
+        ('savings', 'Poupança'),
+        ('debt_reduction', 'Redução de Dívida'),
+        ('expense_reduction', 'Redução de Gastos'),
+        ('income_increase', 'Aumento de Renda'),
+        ('emergency_fund', 'Reserva de Emergência'),
+        ('investment', 'Investimento'),
+        ('custom', 'Personalizado'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('active', 'Ativo'),
+        ('completed', 'Concluído'),
+        ('paused', 'Pausado'),
+        ('cancelled', 'Cancelado'),
+    ]
+    
+    # Basic information
+    company = models.ForeignKey('companies.Company', on_delete=models.CASCADE, related_name='financial_goals')
+    name = models.CharField(_('goal name'), max_length=200)
+    description = models.TextField(_('description'), blank=True)
+    goal_type = models.CharField(_('goal type'), max_length=20, choices=GOAL_TYPES)
+    
+    # Goal settings
+    target_amount = models.DecimalField(_('target amount'), max_digits=15, decimal_places=2)
+    current_amount = models.DecimalField(_('current amount'), max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    target_date = models.DateField(_('target date'))
+    
+    # Categories and accounts
+    categories = models.ManyToManyField(
+        TransactionCategory,
+        related_name='financial_goals',
+        blank=True,
+        help_text="Categories related to this goal"
+    )
+    bank_accounts = models.ManyToManyField(
+        BankAccount,
+        related_name='financial_goals',
+        blank=True,
+        help_text="Accounts to track for this goal"
+    )
+    
+    # Progress tracking
+    monthly_target = models.DecimalField(
+        _('monthly target'),
+        max_digits=15,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="Monthly amount needed to reach goal"
+    )
+    
+    # Settings
+    status = models.CharField(_('status'), max_length=20, choices=STATUS_CHOICES, default='active')
+    is_automatic_tracking = models.BooleanField(_('automatic tracking'), default=True)
+    send_reminders = models.BooleanField(_('send reminders'), default=True)
+    reminder_frequency = models.IntegerField(_('reminder frequency (days)'), default=7)
+    
+    # Metadata
+    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
+    updated_at = models.DateTimeField(_('updated at'), auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_goals')
+    completed_at = models.DateTimeField(_('completed at'), blank=True, null=True)
+    
+    class Meta:
+        db_table = 'financial_goals'
+        verbose_name = _('Financial Goal')
+        verbose_name_plural = _('Financial Goals')
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.name} - R$ {self.target_amount}"
+    
+    @property
+    def progress_percentage(self):
+        """Calculate progress percentage"""
+        if self.target_amount == 0:
+            return 0
+        return (self.current_amount / self.target_amount) * 100
+    
+    @property
+    def remaining_amount(self):
+        """Calculate remaining amount to reach goal"""
+        return self.target_amount - self.current_amount
+    
+    @property
+    def days_remaining(self):
+        """Calculate days remaining to target date"""
+        from django.utils import timezone
+        if self.target_date:
+            delta = self.target_date - timezone.now().date()
+            return delta.days
+        return None
+    
+    @property
+    def required_monthly_amount(self):
+        """Calculate required monthly amount to reach goal"""
+        if not self.days_remaining or self.days_remaining <= 0:
+            return self.remaining_amount
+        
+        months_remaining = max(1, self.days_remaining / 30)
+        return self.remaining_amount / months_remaining
+    
+    def update_progress(self):
+        """Update goal progress based on transactions"""
+        from django.db.models import Sum
+        from django.utils import timezone
+        
+        if not self.is_automatic_tracking:
+            return
+        
+        # Calculate progress based on goal type
+        if self.goal_type == 'savings':
+            # Sum positive transactions in specified accounts
+            transactions = Transaction.objects.filter(
+                bank_account__in=self.bank_accounts.all(),
+                transaction_type__in=['credit', 'transfer_in', 'pix_in'],
+                transaction_date__gte=self.created_at.date()
+            )
+        elif self.goal_type == 'debt_reduction':
+            # Sum debt payments
+            transactions = Transaction.objects.filter(
+                bank_account__company=self.company,
+                category__in=self.categories.all(),
+                transaction_type__in=['debit', 'transfer_out', 'pix_out'],
+                transaction_date__gte=self.created_at.date()
+            )
+        elif self.goal_type == 'expense_reduction':
+            # Calculate expense reduction compared to baseline
+            # This would need more complex logic with historical comparison
+            return
+        else:
+            return
+        
+        total = transactions.aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+        self.current_amount = abs(total)
+        
+        # Check if goal is completed
+        if self.current_amount >= self.target_amount and self.status == 'active':
+            self.status = 'completed'
+            self.completed_at = timezone.now()
+        
+        self.save(update_fields=['current_amount', 'status', 'completed_at', 'updated_at'])
 
 
 class BankSync(models.Model):

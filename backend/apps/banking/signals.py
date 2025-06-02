@@ -65,12 +65,17 @@ def send_transaction_notification(transaction, action):
     """
     Send real-time transaction notification via WebSocket
     """
-    channel_layer = get_channel_layer()
-    if not channel_layer:
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+    except Exception:
+        # Skip WebSocket notifications if Redis is not available
         return
     
-    # Get all users from the company
-    users = transaction.bank_account.company.users.all()
+    # Get the company owner
+    company = transaction.bank_account.company
+    user = company.owner
     
     # Prepare transaction data
     transaction_data = {
@@ -88,32 +93,40 @@ def send_transaction_notification(transaction, action):
                 'category': transaction.category.name if transaction.category else None,
                 'bank_account': {
                     'id': str(transaction.bank_account.id),
-                    'account_name': transaction.bank_account.account_name,
+                    'display_name': transaction.bank_account.display_name,
                     'account_number': transaction.bank_account.account_number[-4:],  # Last 4 digits only
                 }
             }
         }
     }
     
-    # Send to all company users
-    for user in users:
+    # Send to company owner
+    try:
         group_name = f"transactions_{user.id}"
         async_to_sync(channel_layer.group_send)(
             group_name,
             transaction_data
         )
+    except Exception:
+        # Skip if WebSocket/Redis is not available
+        pass
 
 
 def send_balance_notification(bank_account):
     """
     Send real-time balance update via WebSocket
     """
-    channel_layer = get_channel_layer()
-    if not channel_layer:
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+    except Exception:
+        # Skip WebSocket notifications if Redis is not available
         return
     
-    # Get all users from the company
-    users = bank_account.company.users.all()
+    # Get the company owner
+    company = bank_account.company
+    user = company.owner
     
     # Prepare balance data
     balance_data = {
@@ -121,18 +134,21 @@ def send_balance_notification(bank_account):
         'message': {
             'bank_account': {
                 'id': str(bank_account.id),
-                'account_name': bank_account.account_name,
+                'display_name': bank_account.display_name,
                 'account_number': bank_account.account_number[-4:],  # Last 4 digits only
-                'balance': float(bank_account.balance),
+                'current_balance': float(bank_account.current_balance),
                 'is_primary': bank_account.is_primary,
             }
         }
     }
     
-    # Send to all company users
-    for user in users:
+    # Send to company owner
+    try:
         group_name = f"transactions_{user.id}"
         async_to_sync(channel_layer.group_send)(
             group_name,
             balance_data
         )
+    except Exception:
+        # Skip if WebSocket/Redis is not available
+        pass
